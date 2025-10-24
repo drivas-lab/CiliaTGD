@@ -1,0 +1,20 @@
+Package: CiliaTGD
+Type: Package
+Title: Automated Pipeline for Cilia and Nuclei Analysis
+Version: 0.1.0
+Authors@R: person("Theodore", "Drivas", email="theodore.drivas@pennmedicine.upenn.edu", role=c("aut", "cre"))
+Description: This package provides an automated pipeline for microscopy image processing and segmentation and analysis of nuclei and cilia. The main function CiliaTGD() wraps underlying scripts for nucleus segmentation, cilium segmentation, interactive cilia editing, and CiliaQ processing. It outputs summary files of percent ciliation and cilium length across all processed images.
+Depends: R (>= 3.6.0)
+Imports:
+    EBImage,
+    parallel,
+    future.apply,
+    progressr,
+    dplyr,
+    stringr,
+    abind,
+    readr,
+    BiocManager
+License: MIT
+Encoding: UTF-8
+LazyData: true
