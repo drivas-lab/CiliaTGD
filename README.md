@@ -109,6 +109,7 @@ MainDirectory/
 | `pixel_size` | numeric | Microns per pixel. Usually found in microscope metadata or via **Image → Properties** in FIJI. |
 | `nuc_length` | numeric | Expected nucleus diameter in µm. Default = 12. |
 | `watershed` | numeric | Watershed splitting parameter. Larger values split nuclei less aggressively. Default = 3. |
+| `NucleusBorderRemoval` | logical | When counting nuclei, should nuclei on the right and bottom image border be removed? Default is TRUE (remove) |
 | `min_cilium_area` | numeric | Minimum area (in pixels) per cilium. Used for filtering in valid cilia by size (excluding small artifacts). |
 | `fiji_app_path` | string | Full path to FIJI (e.g., `path.expand("~/Desktop/Fiji.app")`). |
 | `SegmentationTester` | logical | Enables parameter grid testing for cilium segmentation to identify ideal segmentation approaches for your data (TRUE/FALSE). Default = FALSE |
@@ -196,8 +197,8 @@ CiliaTGD(
   pixel_size             = 0.0913,
   min_cilium_area        = 50,
   subtract_radius_val    = 20,
-  smooth_radius_val      = 2 
-  seg_method_val         = "RenyiEntropy"
+  smooth_radius_val      = 2,
+  seg_method_val         = "RenyiEntropy",
   fiji_app_path          = "/Applications/Fiji.app",
   CiliaQPreparator       = TRUE,
   CiliaQEditor           = FALSE

@@ -6,6 +6,7 @@
 #' @param pixel_size Numeric. Microns per pixel.
 #' @param nuc_length Numeric. Expected diameter of a nucleus in microns.
 #' @param watershed Numeric. Watershed splitting parameter.
+#' @param NucleusBorderRemoval Should nuclei touching the right/bottom border be removed from counting?
 #' @param cilium_threshold_value Numeric. Threshold for initial cilium segmentation.
 #' @param min_cilium_area Numeric. Minimum area for cilium filter.
 #' @param background_subtraction Numeric. Brush size for background subtraction.
@@ -25,6 +26,7 @@
     pixel_size = NULL,             # required
     nuc_length = 12,               # defaulted
     watershed = 3,                 # defaulted
+    NucleusBorderRemoval = TRUE,   # defaulted
     cilium_threshold_value = NULL, # required only if Preparator = FALSE 
     min_cilium_area = NULL,        # required
     background_subtraction = NULL, # required only if Preparator = FALSE
@@ -48,6 +50,7 @@
     need(pixel_size, "pixel_size")
     need(min_cilium_area, "min_cilium_area")
     need(fiji_app_path, "fiji_app_path")
+    need(NucleusBorderRemoval, "NucleusBorderRemoval")
     
     # 2️⃣ Normalize paths
     MainDirectory <- normalizePath(path.expand(MainDirectory), winslash = "/", mustWork = TRUE)
@@ -136,6 +139,7 @@
   cat("  - pixel_size =", pixel_size, "\n")
   cat("  - nuc_length =", nuc_length, "\n")
   cat("  - watershed =", watershed, "\n")
+  cat("  - NucleusBorderRemoval =", NucleusBorderRemoval, "\n")
   cat("  - cilium_threshold_value =", cilium_threshold_value, "\n")
   cat("  - min_cilium_area =", min_cilium_area, "\n")
   cat("  - background_subtraction =", background_subtraction, "\n")
@@ -260,7 +264,7 @@
       # inject parameters the pipeline reads (defaults from current scope)
       inherit <- parent.frame()
       param_names <- c(
-        "MainDirectory","pixel_size","nuc_length","watershed",
+        "MainDirectory","pixel_size","nuc_length","watershed", "NucleusBorderRemoval",
         "cilium_threshold_value","min_cilium_area","background_subtraction",
         "cilium_aspectratio","brightnessfactor","CiliaQPreparator",
         "subtract_radius_val","smooth_radius_val","seg_method_val",

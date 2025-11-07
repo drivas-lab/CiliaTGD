@@ -221,6 +221,7 @@ if(!("EBImage" %in% utils::installed.packages())){
 if (!exists("RUN_NUCLEI", inherits = TRUE)) RUN_NUCLEI <- TRUE
 if (!exists("FIX_TIFF_METADATA", inherits = TRUE)) FIX_TIFF_METADATA <- TRUE
 if (!exists("SEGTEST_ACTIVE", inherits = TRUE)) SEGTEST_ACTIVE <- FALSE
+if (!exists("NucleusBorderRemoval", inherits = TRUE)) NucleusBorderRemoval <- TRUE
 
 
 ################################################################################
@@ -609,73 +610,293 @@ process_directory <- function(input_dir_tif) {
     # label
     nmask <- EBImage::bwlabel(nmask)
     
-    # rough watershed & size-based pruning
+   
+    # -----------------------------------------------------------------------
+    # Stage 0: rough watershed & size-based pruning (same spirit as before)
+    # -----------------------------------------------------------------------
+    
     nmask2 <- EBImage::watershed(EBImage::distmap(nmask), 4)
     table_nmask <- table(nmask2)
     
-    if(length(table_nmask) >=2) {
-      nuc_min_area_median <- median(table_nmask[-1])/3
-      nuc_min_area_mean <- mean(table_nmask[-1])/3
-      nuc_min_area <- if(nuc_min_area_mean > (2*nuc_min_area_median)){
-        0.5 * (nuc_min_area_mean + nuc_min_area_median)
-      } else {
-        nuc_min_area_median
-      }
+    if (length(table_nmask) >= 2) {
+      fg_counts <- table_nmask[names(table_nmask) != "0"]
       
-      expected_nuc_area <- pi*(((nuc_length/pixel_size)/2)^2)
-      
-      to_be_removed <- c(as.integer(names(which(table_nmask < nuc_min_area))),
-                         as.integer(names(which(table_nmask < 0.5*(expected_nuc_area) ))))
-      
-      to_be_removed <- sort(to_be_removed[to_be_removed != 0])
-      
-      if(length(to_be_removed) > 0){
-        for(i in to_be_removed){
-          EBImage::imageData(nmask2)[EBImage::imageData(nmask2) == i] <- 0
+      if (length(fg_counts) > 0) {
+        nuc_min_area_median <- median(fg_counts) / 3
+        nuc_min_area_mean   <- mean(fg_counts) / 3
+        nuc_min_area <- if (nuc_min_area_mean > (2 * nuc_min_area_median)) {
+          0.5 * (nuc_min_area_mean + nuc_min_area_median)
+        } else {
+          nuc_min_area_median
+        }
+        
+        expected_nuc_area <- pi * (((nuc_length / pixel_size) / 2)^2)
+        
+        to_be_removed <- c(
+          as.integer(names(which(fg_counts < nuc_min_area))),
+          as.integer(names(which(fg_counts < 0.5 * expected_nuc_area)))
+        )
+        to_be_removed <- sort(unique(to_be_removed[to_be_removed != 0]))
+        
+        if (length(to_be_removed) > 0) {
+          dat <- EBImage::imageData(nmask2)
+          for (lab in to_be_removed) {
+            dat[dat == lab] <- 0
+          }
+          EBImage::imageData(nmask2) <- dat
         }
       }
     }
     
-    # recount
-    expected_nuc_area <- pi*(((nuc_length/pixel_size)/2)^2)
-    nmask <- EBImage::bwlabel(nmask2)
-    total_nuclei_area <- sum(nmask != 0)
-    
-    # Watershed only large nuclei
-    object_sizes <- table(nmask)
+    # Recount / relabel after rough watershed & pruning
+    nmask3 <- EBImage::bwlabel(nmask2)
+    object_sizes <- table(nmask3)
     object_sizes <- object_sizes[names(object_sizes) != "0"]
-    object_labels <- as.integer(names(object_sizes))
-    watershed_threshold <- expected_nuc_area * 1.5
     
-    small_labels <- object_labels[object_sizes <= watershed_threshold]
-    large_labels <- object_labels[object_sizes > watershed_threshold]
-    
-    small_mask <- nmask
-    large_mask <- nmask
-    small_mask[!(nmask %in% small_labels)] <- 0
-    large_mask[!(nmask %in% large_labels)] <- 0
-    
-    large_mask_bin <- large_mask > 0
-    watershed_large <- EBImage::watershed(EBImage::distmap(large_mask_bin), watershed)
-    watershed_large[large_mask == 0] <- 0
-    
-    combined_mask <- small_mask
-    watershed_large_shifted <- watershed_large
-    watershed_large_shifted[watershed_large > 0] <- watershed_large[watershed_large > 0] + max(small_mask)
-    nmask_watershed <- combined_mask + watershed_large_shifted
-    
-    # remove nuclei touching right/bottom
-    right <- table(nmask_watershed[dim(nmask_watershed)[1], 1:dim(nmask_watershed)[2]])
-    bottom <- table(nmask_watershed[1:dim(nmask_watershed)[1],dim(nmask_watershed)[2]])
-    right <- as.integer(names(right))
-    bottom <- as.integer(names(bottom))
-    nuclei_at_borders <- unique(c(right, bottom))
-    nuclei_at_borders <- nuclei_at_borders[nuclei_at_borders != 0]
-    
-    if(length(nuclei_at_borders) > 0){
-      for(i in nuclei_at_borders){
-        EBImage::imageData(nmask_watershed)[EBImage::imageData(nmask_watershed) == i] <- 0
+    if (!length(object_sizes)) {
+      # No nuclei after pruning
+      nmask_watershed <- nmask3
+      
+    } else {
+      object_labels <- as.integer(names(object_sizes))
+      obj_areas     <- as.numeric(object_sizes)
+      
+      # --------------------------------------------------------------------
+      # Stage 1: original-style watershed on "large" blobs only
+      # --------------------------------------------------------------------
+      
+      areas_sorted <- sort(obj_areas)
+      lower_n      <- max(10L, floor(0.3 * length(areas_sorted)))
+      lower_n      <- min(lower_n, length(areas_sorted))
+      single_est   <- median(areas_sorted[1:lower_n])
+      r_single     <- sqrt(single_est / pi)
+      
+      message("Single_est v1 (px^2): ", round(single_est, 1))
+      
+      # Threshold for "large" blobs to get first-pass watershed
+      large_factor_ws <- 0.75
+      large_thr_ws    <- large_factor_ws * single_est
+      message("Large threshold for Stage 1 WS (px^2): ", round(large_thr_ws, 1))
+      
+      large_labels_ws <- object_labels[obj_areas >= large_thr_ws]
+      small_labels_ws <- setdiff(object_labels, large_labels_ws)
+      
+      # Build small and large masks
+      small_mask <- nmask3
+      small_mask[!(nmask3 %in% small_labels_ws)] <- 0
+      
+      large_mask <- nmask3
+      large_mask[!(nmask3 %in% large_labels_ws)] <- 0
+      large_mask_bin <- large_mask > 0
+      
+      if (length(large_labels_ws) > 0 && any(large_mask_bin)) {
+        dist_large <- EBImage::distmap(large_mask_bin)
+        watershed_large <- EBImage::watershed(dist_large, tolerance = watershed)
+        watershed_large[!large_mask_bin] <- 0
+        
+        # Offset watershed labels so they don't collide with small labels
+        max_small_val <- if (any(small_mask > 0)) max(small_mask) else 0L
+        watershed_large_shifted <- watershed_large
+        if (any(watershed_large > 0)) {
+          watershed_large_shifted[watershed_large > 0] <-
+            watershed_large[watershed_large > 0] + max_small_val
+        }
+        
+        nmask_ws0 <- small_mask + watershed_large_shifted
+      } else {
+        nmask_ws0 <- nmask3
       }
+      
+      # --------------------------------------------------------------------
+      # Stage 2: local seeded refinement ONLY for very large Stage 1 labels
+      # --------------------------------------------------------------------
+      
+      areas2 <- table(nmask_ws0)
+      areas2 <- areas2[names(areas2) != "0"]
+      labs2  <- as.integer(names(areas2))
+      areas2_num <- as.numeric(areas2)
+      
+      if (length(areas2_num) > 0) {
+        areas2_sorted <- sort(areas2_num)
+        lower_n2      <- max(10L, floor(0.3 * length(areas2_sorted)))
+        lower_n2      <- min(lower_n2, length(areas2_sorted))
+        single_est2   <- median(areas2_sorted[1:lower_n2])
+        r_single2     <- sqrt(single_est2 / pi)
+        
+        message("Single_est v2 (px^2): ", round(single_est2, 1))
+        
+        # Very large blobs to consider for refinement
+        refine_factor <- 2.2
+        refine_thr    <- refine_factor * single_est2
+        big_labels    <- labs2[areas2_num >= refine_thr]
+        
+        # Helper: find seeds inside one blob
+        find_seeds <- function(dist_blob,
+                               blob_mask,
+                               r_single,
+                               single_est,
+                               min_peak_factor      = 0.4,
+                               min_seed_dist_factor = 0.6,
+                               area_per_seed_factor = 1.0,
+                               max_seeds_cap        = 6L) {
+          blob_area <- sum(blob_mask)
+          if (blob_area < 1.6 * single_est) return(NULL)
+          if (!is.finite(r_single) || r_single < 2) return(NULL)
+          
+          dm <- dist_blob
+          dm[!blob_mask] <- 0
+          
+          # Local maxima of distance
+          dm_dil <- EBImage::dilate(dm, EBImage::makeBrush(3, shape = "diamond"))
+          locmax <- (dm == dm_dil) & blob_mask & (dm >= min_peak_factor * r_single)
+          coords <- which(locmax, arr.ind = TRUE)
+          if (nrow(coords) < 2) return(NULL)
+          
+          # Sort peaks by distance (strongest first)
+          dvals <- dm[coords]
+          o <- order(dvals, decreasing = TRUE)
+          coords <- coords[o, , drop = FALSE]
+          
+          # Max seeds based on area
+          max_by_area <- floor(blob_area / (area_per_seed_factor * single_est))
+          max_seeds   <- max(2L, min(max_by_area, max_seeds_cap))
+          if (max_seeds < 2L) return(NULL)
+          
+          # Enforce spacing between seeds
+          min_dist2 <- (min_seed_dist_factor * r_single)^2
+          picked <- coords[1, , drop = FALSE]
+          
+          for (i in 2:nrow(coords)) {
+            if (nrow(picked) >= max_seeds) break
+            y <- coords[i, 1]; x <- coords[i, 2]
+            dy <- picked[,1] - y
+            dx <- picked[,2] - x
+            if (all((dx*dx + dy*dy) >= min_dist2)) {
+              picked <- rbind(picked, c(y, x))
+            }
+          }
+          
+          if (nrow(picked) < 2) return(NULL)
+          colnames(picked) <- c("y", "x")
+          picked
+        }
+        
+        nmask_refined <- nmask_ws0
+        max_label <- if (length(labs2)) max(labs2) else 0L
+        total_extra <- 0L
+        
+        for (L in big_labels) {
+          blob_mask <- (nmask_ws0 == L)
+          if (!any(blob_mask)) next
+          
+          dist_blob <- EBImage::distmap(blob_mask)
+          
+          seeds <- find_seeds(
+            dist_blob   = dist_blob,
+            blob_mask   = blob_mask,
+            r_single    = r_single2,
+            single_est  = single_est2
+          )
+          
+          # If no confident multi-center evidence -> keep Stage 1 label as-is
+          if (is.null(seeds)) next
+          
+          # Build seed label image
+          seed_img <- EBImage::Image(0, dim = dim(blob_mask))
+          for (i in seq_len(nrow(seeds))) {
+            seed_img[seeds[i, "y"], seeds[i, "x"]] <- i
+          }
+          seed_labels <- EBImage::bwlabel(seed_img > 0)
+          
+          # Local seeded segmentation via propagate
+          dist_neg <- -dist_blob
+          dist_neg[!blob_mask] <- max(dist_neg)
+          ws_local <- EBImage::propagate(dist_neg, seed_labels, mask = blob_mask)
+          
+          seg_ids <- setdiff(unique(ws_local), 0)
+          if (length(seg_ids) < 2) next
+          
+          seg_masks <- lapply(seg_ids, function(id) ws_local == id)
+          seg_areas <- vapply(seg_masks, sum, numeric(1))
+          
+          # Relaxed plausible nuclear-size band: [0.3, 3.0] x typical
+          ok <- seg_areas >= 0.3 * single_est2 & seg_areas <= 3.0 * single_est2
+          
+          # Need at least 2 plausible nuclei
+          if (sum(ok) < 2) next
+          
+          # Coverage: plausible segments should cover a good chunk of original blob
+          ok_union <- Reduce(`|`, seg_masks[ok])
+          if (sum(ok_union) < 0.6 * sum(blob_mask)) {
+            # Would ignore too much -> keep L as-is
+            next
+          }
+          
+          # ACCEPT this split: clear old label region
+          nmask_refined[blob_mask] <- 0
+          
+          # Write new labels for ok segments
+          new_count <- 0L
+          for (k in seq_along(seg_masks)) {
+            if (!ok[k]) next
+            m <- seg_masks[[k]]
+            if (!any(m)) next
+            max_label <- max_label + 1L
+            nmask_refined[m] <- max_label
+            new_count <- new_count + 1L
+          }
+          
+          if (new_count >= 2) {
+            total_extra <- total_extra + (new_count - 1L)
+          } else {
+            # Paranoid fallback: if somehow we didn't create >=2, restore L
+            nmask_refined[blob_mask] <- L
+          }
+        }
+        
+        message("Second-pass local splitting added ", total_extra,
+                " extra nuclei from huge blobs.")
+        
+        nmask_watershed <- nmask_refined
+      } else {
+        # No labels after Stage 1 (unlikely)
+        nmask_watershed <- nmask_ws0
+      }
+    }
+    
+    # ---- Final counts from final mask (before border removal) ----
+    total_nuclei_area <- sum(nmask_watershed != 0)
+    nucNo <- length(setdiff(unique(nmask_watershed), 0))
+    mean_nucleus_area_in_pixels <- if (nucNo > 0) {
+      round(total_nuclei_area / nucNo)
+    } else {
+      0
+    }
+    
+    
+    
+    
+    
+    
+    
+    # optionally remove nuclei touching right/bottom borders
+    if (isTRUE(NucleusBorderRemoval)) {
+      right <- table(nmask_watershed[dim(nmask_watershed)[1], 1:dim(nmask_watershed)[2]])
+      bottom <- table(nmask_watershed[1:dim(nmask_watershed)[1], dim(nmask_watershed)[2]])
+      
+      right <- as.integer(names(right))
+      bottom <- as.integer(names(bottom))
+      
+      nuclei_at_borders <- unique(c(right, bottom))
+      nuclei_at_borders <- nuclei_at_borders[nuclei_at_borders != 0]
+      
+      if (length(nuclei_at_borders) > 0) {
+        for (i in nuclei_at_borders) {
+          EBImage::imageData(nmask_watershed)[EBImage::imageData(nmask_watershed) == i] <- 0
+        }
+      }
+    } else {
+      message(" [NucleusBorderRemoval] Keeping nuclei touching right/bottom borders.")
     }
     
     # counts

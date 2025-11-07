@@ -40,6 +40,7 @@ CiliaTGD(MainDirectory,
   \item{pixel_size}{\code{numeric}. Microns per pixel. You can get this from ImageJ if needed}
   \item{nuc_length}{\code{numeric}. Expected diameter of a nucleus in microns (12uM works well for hTERT-RPE1).}
   \item{watershed}{\code{numeric}. Watershed splitting parameter. Larger values split less aggressively. Default is 3, but higher numbers will split less, and lower will split more}
+  \item{NucleusBorderRemoval}{\code{TRUE/FALSE}. When counting nuclei, should nuclei on the right and bottom image border be removed? Default is TRUE (remove)}
   \item{cilium_threshold_value}{\code{numeric}. Threshold for initial cilium segmentation (normalized 0–255). Higher numbers will threshold more and be more selective about what they call cilia. Values between 4 and 12 seem to be best, but test different values for your image set. Only needed if CiliaQ Preparator is set to FALSE (the default)}
   \item{min_cilium_area}{\code{numeric}. Minimum area (in pixels) to keep objects in cilium mask. 50 works well. Only needed if CiliaQ Preparator is set to FALSE (the default)}
   \item{background_subtraction}{\code{numeric}. Brush size for background subtraction (in pixels). Use higher numbers if you have less background. For IF images with low background, ~20 works best. For live cell images, ~8-10 works best. Only needed if CiliaQ Preparator is set to FALSE (the default)}
